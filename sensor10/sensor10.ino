@@ -8,9 +8,9 @@
 #include "SDS011.h"
 #include <TheThingsNetwork.h>
 #include <lmic.h>
-#include <hal/hal.h>
 #include "ttnKeys.h"
-#include <TinyGPS.h>
+#include <hal/hal.h>
+#include <TinyGPS.h> // Download at http://arduiniana.org/libraries/tinygps/
 #include <SoftwareSerial.h>
 
 // define PINS
@@ -29,7 +29,7 @@ const lmic_pinmap lmic_pins = {
 
 float p10,p25;
 int sds_error, nr_sat;
-long lati, longi;
+unsigned long lati, longi;
 static uint8_t message[12];
 
 const unsigned TX_INTERVAL = 10;
@@ -39,6 +39,13 @@ static osjob_t sendjob;
 SDS011 sds;
 TinyGPS gps;
 SoftwareSerial ss(3, 4); // Arduino RX, TX
+
+// These callbacks are only used in over-the-air activation, so they are
+// left empty here (we cannot leave them out completely unless
+// DISABLE_JOIN is set in config.h, otherwise the linker will complain).
+void os_getArtEui (u1_t* buf) { }
+void os_getDevEui (u1_t* buf) { }
+void os_getDevKey (u1_t* buf) { }
 
 static void smartdelay(unsigned long ms)
 {
@@ -205,15 +212,16 @@ void setup() {
   Serial.println();
   Serial.println("Sats HDOP Latitude  Longitude  Fix  Date       Time     Date Alt    Course Speed Card  Distance Course Card  Chars Sentences Checksum");
   Serial.println("          (deg)     (deg)      Age                      Age  (m)    --- from GPS ----  ---- to London  ----  RX    RX        Fail");
-  Serial.println("-------------------------------------------------------------------------------------------------------------------------------------");
+  //Serial.println("-------------------------------------------------------------------------------------------------------------------------------------");
   // init SDS
   sds.begin(RX, TX);
 
+  Serial.println("SDS initialized");
   // LMIC init
     os_init();
     // Reset the MAC state. Session and pending data transfers will be discarded.
     LMIC_reset();
-
+    
     // Set static session parameters. Instead of dynamically establishing a session
     // by joining the network, precomputed session parameters are be provided.
     #ifdef PROGMEM
@@ -236,6 +244,8 @@ void setup() {
     // Set data rate and transmit power (note: txpow seems to be ignored by the library)
     LMIC_setDrTxpow(DR_SF7,14);
     
+    Serial.println("LoRa setup done");
+    
   // init GPS
 
   // init LoRa
@@ -251,17 +261,19 @@ void read_gps_data() {
   nr_sat = gps.satellites();
   print_int(gps.hdop(), TinyGPS::GPS_INVALID_HDOP, 5);
   gps.f_get_position(&flat, &flon, &age);
+  
   lati = flat * 1000000;
   longi = flon * 1000000;
+  Serial.println(flat);
   print_float(flat, TinyGPS::GPS_INVALID_F_ANGLE, 10, 6);
   print_float(flon, TinyGPS::GPS_INVALID_F_ANGLE, 11, 6);
-  print_int(age, TinyGPS::GPS_INVALID_AGE, 5);
+  /*print_int(age, TinyGPS::GPS_INVALID_AGE, 5);
   print_date(gps);
   print_float(gps.f_altitude(), TinyGPS::GPS_INVALID_F_ALTITUDE, 7, 2);
   print_float(gps.f_course(), TinyGPS::GPS_INVALID_F_ANGLE, 7, 2);
   print_float(gps.f_speed_kmph(), TinyGPS::GPS_INVALID_F_SPEED, 6, 2);
   print_str(gps.f_course() == TinyGPS::GPS_INVALID_F_ANGLE ? "*** " : TinyGPS::cardinal(gps.f_course()), 6);
-  /*print_int(flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0xFFFFFFFF : (unsigned long)TinyGPS::distance_between(flat, flon, LONDON_LAT, LONDON_LON) / 1000, 0xFFFFFFFF, 9);
+  print_int(flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0xFFFFFFFF : (unsigned long)TinyGPS::distance_between(flat, flon, LONDON_LAT, LONDON_LON) / 1000, 0xFFFFFFFF, 9);
   print_float(flat == TinyGPS::GPS_INVALID_F_ANGLE ? TinyGPS::GPS_INVALID_F_ANGLE : TinyGPS::course_to(flat, flon, LONDON_LAT, LONDON_LON), TinyGPS::GPS_INVALID_F_ANGLE, 7, 2);
   print_str(flat == TinyGPS::GPS_INVALID_F_ANGLE ? "*** " : TinyGPS::cardinal(TinyGPS::course_to(flat, flon, LONDON_LAT, LONDON_LON)), 6);
 */
@@ -274,15 +286,15 @@ void read_gps_data() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  /* pseudo-code for defining program-log */
-
-  
+  //Serial.println("Reading GPS data");
   read_gps_data();
   if(nr_sat > 3)
   {
+    //Serial.println("Got GPS Fix; reading sds");
     sds_error = sds.read(&p25,&p10);
     if(!sds_error)
     {
+      //Serial.println("sds successfull");
       message[0] = (lati & 0xFF000000) >> 24;
       message[1] = (lati & 0x00FF0000) >> 16;
       message[2] = (lati & 0x0000FF00) >> 8;
@@ -297,7 +309,22 @@ void loop() {
       int p25_copy = (int) p25;
       message[10] = (p25_copy & 0xFF00) >> 8;
       message[11] = (p25_copy & 0x00FF);
-
+      Serial.println(lati);
+      Serial.println(longi);
+      //Serial.println(p10_copy);
+      //Serial.println(p25_copy);
+      /*Serial.println(message[0]);
+      Serial.println(message[1]);
+      Serial.println(message[2]);
+      Serial.println(message[3]);
+      Serial.println(message[4]);
+      Serial.println(message[5]);
+      Serial.println(message[6]);
+      Serial.println(message[7]);
+      Serial.println(message[8]);
+      Serial.println(message[9]);
+      Serial.println(message[10]);
+      Serial.println(message[11]);*/
       do_send(&sendjob);
     }
     else
@@ -307,7 +334,7 @@ void loop() {
   }
   else
   {
-    Serial.println("GPS accuracy too low!");
+    //Serial.println("GPS accuracy too low!");
   }
   os_runloop_once(); // LMIC needs this
   smartdelay(1000);
